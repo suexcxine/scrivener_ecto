@@ -7,12 +7,12 @@ defimpl Scrivener.Paginater, for: Ecto.Query do
 
   @spec paginate(Ecto.Query.t, Scrivener.Config.t) :: Scrivener.Page.t
   def paginate(query, %Config{page_size: page_size, page_number: page_number, module: repo, caller: caller, options: options}) do
-    total_entries = Keyword.get_lazy(options, :total_entries, fn -> total_entries(query, repo, caller) end)
-
+    entries = entries(query, repo, page_number, page_size, caller)
+    total_entries = Keyword.get_lazy(options, :total_entries, fn -> total_entries(page_number, page_size, Enum.count(entries)) end)
     %Page{
       page_size: page_size,
       page_number: page_number,
-      entries: entries(query, repo, page_number, page_size, caller),
+      entries: entries,
       total_entries: total_entries,
       total_pages: total_pages(total_entries, page_size)
     }
@@ -20,49 +20,17 @@ defimpl Scrivener.Paginater, for: Ecto.Query do
 
   defp entries(query, repo, page_number, page_size, caller) do
     offset = page_size * (page_number - 1)
-
     query
     |> limit(^page_size)
     |> offset(^offset)
     |> repo.all(caller: caller)
   end
 
-  defp total_entries(query, repo, caller) do
-    total_entries =
-      query
-      |> exclude(:preload)
-      |> exclude(:order_by)
-      |> prepare_select
-      |> count
-      |> repo.one(caller: caller)
-
-    total_entries || 0
+  defp total_entries(page_number, page_size, entries_count) when entries_count >= page_size do
+    (page_number - 1) * page_size + entries_count + 1
   end
-
-  defp prepare_select(
-    %{
-      group_bys: [
-        %Ecto.Query.QueryExpr{
-          expr: [
-            {{:., [], [{:&, [], [source_index]}, field]}, [], []} | _
-          ]
-        } | _
-      ]
-    } = query
-  ) do
-    query
-    |> exclude(:select)
-    |> select([x: source_index], struct(x, ^[field]))
-  end
-  defp prepare_select(query) do
-    query
-    |> exclude(:select)
-  end
-
-  defp count(query) do
-    query
-    |> subquery
-    |> select(count("*"))
+  defp total_entries(page_number, page_size, entries_count) do
+    (page_number - 1) * page_size + entries_count
   end
 
   defp total_pages(0, _), do: 1
